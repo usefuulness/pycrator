@@ -59,7 +59,7 @@ command_exists() {
 
 # Function to check dependencies
 check_dependencies() {
-    local deps=("python3" "curl")
+    local deps=("python3" "curl" "git")
     for cmd in "${deps[@]}"; do
         if ! command_exists "$cmd"; then
             log "Error: '$cmd' is not installed. Please install it and retry."
@@ -70,14 +70,6 @@ check_dependencies() {
     if [ "$BUILD_SYSTEM" = "poetry" ] && ! command_exists "poetry"; then
         log "Error: 'poetry' is not installed. Please install it or choose a different build system."
         exit 1
-    fi
-
-    if [ "$FORMATTER" != "none" ] && ! command_exists "$FORMATTER"; then
-        log "Note: Formatter '$FORMATTER' is not installed. It will be installed in the virtual environment."
-    fi
-
-    if [ "$LINTER" != "none" ] && ! command_exists "$LINTER"; then
-        log "Note: Linter '$LINTER' is not installed. It will be installed in the virtual environment."
     fi
 
     if [ "$CREATE_REPO" = true ] && ! command_exists "gh"; then
@@ -126,27 +118,25 @@ create_directories() {
     local layout="$2"
 
     log "Creating project directory: $package"
-    mkdir "$package"
-    cd "$package"
+    mkdir "$package" || { log "Failed to create directory $package"; exit 1; }
 
     if [ "$layout" = "src" ]; then
         log "Using 'src' layout."
-        mkdir "src"
-        mkdir "src/$package"
-        touch "src/$package/__init__.py"
+        mkdir -p "$package/src/$package"
+        touch "$package/src/$package/__init__.py"
     else
         log "Using direct layout."
-        mkdir "$package"
-        touch "$package/__init__.py"
+        mkdir -p "$package/$package"
+        touch "$package/$package/__init__.py"
     fi
 
     log "Creating tests directory."
-    mkdir "tests"
-    touch "tests/__init__.py"
+    mkdir -p "$package/tests"
+    touch "$package/tests/__init__.py"
 
     if [ "$TEST_FRAMEWORK" = "pytest" ]; then
         log "Setting up pytest sample test."
-        cat > tests/test_sample.py <<EOL
+        cat > "$package/tests/test_sample.py" <<EOL
 import pytest
 
 def test_sample():
@@ -154,7 +144,7 @@ def test_sample():
 EOL
     else
         log "Setting up unittest sample test."
-        cat > tests/test_sample.py <<EOL
+        cat > "$package/tests/test_sample.py" <<EOL
 import unittest
 
 class TestSample(unittest.TestCase):
@@ -176,7 +166,7 @@ create_build_files() {
         log "Initializing Poetry project."
         poetry init --name "$package" --author "$AUTHOR_NAME <$AUTHOR_EMAIL>" --description "$DESCRIPTION" --python "^$PYTHON_VERSION" --dependency "" --dev-dependency "" -n
 
-        # Update pyproject.toml with desired settings if needed
+        # Additional configurations can be added here if needed
     else
         log "Creating setup.py using setuptools."
         cat > setup.py <<EOL
@@ -470,7 +460,6 @@ jobs:
       with:
         python-version: \${{ matrix.python-version }}
     - name: Install dependencies
-      if: steps.pre_commit.outputs.changed == 'true'
       run: |
         ${INSTALL_COMMAND}
     - name: Lint with flake8
@@ -569,10 +558,10 @@ setup_formatter() {
 
     if [ "$formatter" = "black" ]; then
         log "Configuring Black formatter."
-        echo "import sys; sys.exit(0)" > tests/.black_test.py
+        # Additional configuration can be added here if needed
     elif [ "$formatter" = "autopep8" ]; then
         log "Configuring AutoPEP8 formatter."
-        echo "" > .pep8
+        # Additional configuration can be added here if needed
     fi
 }
 
@@ -613,6 +602,8 @@ parse_args() {
     PYTHON_VERSION="3"
     LICENSE_TYPE="MIT"
     CREATE_REPO=false
+    SETUP_DOCS=false
+    REMOTE_URL=""
 
     while [[ "$#" -gt 0 ]]; do
         case $1 in
@@ -621,16 +612,26 @@ parse_args() {
                 shift
                 ;;
             --remote)
-                REMOTE_URL="$2"
-                shift 2
+                if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                    REMOTE_URL="$2"
+                    shift 2
+                else
+                    log "Error: --remote requires an argument."
+                    usage
+                fi
                 ;;
             --create-repo)
                 CREATE_REPO=true
                 shift
                 ;;
             --license)
-                LICENSE_TYPE="$2"
-                shift 2
+                if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                    LICENSE_TYPE="$2"
+                    shift 2
+                else
+                    log "Error: --license requires an argument."
+                    usage
+                fi
                 ;;
             --build-system)
                 if [[ "$2" == "setuptools" || "$2" == "poetry" ]]; then
@@ -700,7 +701,12 @@ parse_args() {
                 shift 2
                 ;;
             --python)
-                PYTHON_VERSION="$2"
+                if [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                    PYTHON_VERSION="$2"
+                else
+                    log "Invalid Python version: $2."
+                    exit 1
+                fi
                 shift 2
                 ;;
             --help)
@@ -792,13 +798,19 @@ if [ "$INIT_GIT" = true ] || [ "$CREATE_REPO" = true ]; then
     init_git
 fi
 
+# Set up Git remote if provided
+if [ -n "$REMOTE_URL" ]; then
+    log "Setting Git remote to $REMOTE_URL"
+    git remote add origin "$REMOTE_URL"
+fi
+
 # Create virtual environment
 create_virtualenv "$ENV_TOOL" "$PYTHON_VERSION"
 
 # Activate virtual environment
 activate_virtualenv "$ENV_TOOL"
 
-# Install dependencies
+# Determine install and test commands
 if [ "$BUILD_SYSTEM" = "poetry" ]; then
     INSTALL_COMMAND="poetry install"
     TEST_RUN_COMMAND="poetry run pytest"
@@ -811,6 +823,7 @@ else
     fi
 fi
 
+# Install dependencies
 install_dependencies "$ENV_TOOL" "$BUILD_SYSTEM"
 
 # Set up formatter and linter
