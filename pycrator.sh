@@ -7,6 +7,8 @@
 # customization options, including build systems, project layouts, GitHub
 # integration, CI setup, dependency management, and more.
 # =============================================================================
+# made by usefuulness @ usefulmedia.de with <3
+# =============================================================================
 
 # Exit immediately if a command exits with a non-zero status
 set -e
